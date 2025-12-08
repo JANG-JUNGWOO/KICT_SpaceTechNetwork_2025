@@ -157,3 +157,7 @@ if G.number_of_nodes() > 0:
 colors_map = {'A': 'red', 'B': 'blue', 'C': 'green', 'D': 'purple', 'E': 'orange', 'F': 'brown'}
 fig = create_graph_figure(G, similarity_threshold, colors_map)
 fig.show()
+
+output_path = "space_tech_network.gpickle"
+with open(output_path, 'wb') as f:
+    pickle.dump(G, f)
