@@ -1,0 +1,159 @@
+# Python 3.11.9
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+
+import networkx as nx
+
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
+MODEL_DIR = r"model/all-MiniLM-L12-v2"
+VAULT_PATH = r"table_data.xlsx"
+
+model = SentenceTransformer(MODEL_DIR)
+data = pd.read_excel(VAULT_PATH)
+
+def get_embeddings(texts, model, show_progress=True):
+    return model.encode(texts, show_progress_bar=show_progress)
+
+def get_similarity_matrix(embeddings):
+    return cosine_similarity(embeddings)
+
+def create_similarity_dataframe(matrix, labels):
+    sim_df = pd.DataFrame(matrix, columns=labels, index=labels)
+    sim_df_sorted = sim_df.stack().reset_index()
+    sim_df_sorted.columns = ['기술1', '기술2', '유사도']
+    sim_df_sorted = sim_df_sorted[sim_df_sorted['기술1'] != sim_df_sorted['기술2']]
+    sim_df_sorted['기술1'] = sim_df_sorted['기술1'].astype(str)
+    sim_df_sorted['기술2'] = sim_df_sorted['기술2'].astype(str)
+    return sim_df_sorted
+
+data['allText'] = data['overview'] + '.' + data['necessity'] + '.' + data['subtech']
+combined_labels = data['코드'] + ' - ' + data['기술명']
+
+embeddings = get_embeddings(data['allText'].tolist(), model)
+similarity_matrix = get_similarity_matrix(embeddings)
+sim_combined_df_sorted = create_similarity_dataframe(similarity_matrix, combined_labels)
+
+# Create network graph
+def create_network_graph(data, sim_df, threshold):
+    G = nx.Graph()
+    code_to_category_name = pd.Series(data['대분류'].values, index=data['코드']).to_dict()
+    code_to_name = pd.Series(data['기술명'].values, index=data['코드']).to_dict()
+    combined_labels = data['코드'] + ' - ' + data['기술명']
+
+    for label in combined_labels:
+        code = label.split(' - ')[0]
+        G.add_node(label, 
+                   category_name=code_to_category_name.get(code, 'Unknown'),
+                   tech_name=code_to_name.get(code, ''),
+                   code=code,
+                   category_letter=code[0] if code else 'Unknown')
+
+    filtered_edges = sim_df[sim_df['유사도'] >= threshold]
+    for _, row in filtered_edges.iterrows():
+        if G.has_node(row['기술1']) and G.has_node(row['기술2']):
+            G.add_edge(row['기술1'], row['기술2'], weight=row['유사도'])
+            
+    return G
+
+def create_graph_figure(G, threshold, colors_map):
+    pos = nx.spring_layout(G, k=0.4, iterations=60, seed=42)
+
+    edge_x, edge_y = [], []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y, 
+        line=dict(width=0.7, color='#888'), 
+        hoverinfo='none', 
+        mode='lines',
+        showlegend=False  
+    )
+
+    node_x, node_y, node_text, node_hover_text, node_color, node_size = [], [], [], [], [], []
+    degrees = [G.degree(node) for node in G.nodes()]
+    min_deg, max_deg = (min(degrees), max(degrees)) if degrees else (0, 0)
+    min_size, max_size = 3, 30
+
+    for node, deg in zip(G.nodes(), degrees):
+        x, y = pos[node]
+        node_info = G.nodes[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(node_info['code'])
+        node_color.append(colors_map.get(node_info['category_letter'], 'grey'))
+        
+        size = min_size
+        if max_deg > min_deg:
+            size = min_size + (max_size - min_size) * (deg - min_deg) / (max_deg - min_deg)
+        elif degrees:
+            size = (min_size + max_size) / 2
+        node_size.append(size)
+        
+        hover_text = (f"Code: {node_info['code']}<br>Category: {node_info['category_name']}<br>"
+                      f"Technology: {node_info['tech_name']}<br>Connections: {deg}")
+        node_hover_text.append(hover_text)
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y, mode='markers+text', hoverinfo='text',
+        hovertext=node_hover_text, text=node_text, textposition='top center',
+        textfont=dict(size=9, color='black'),
+        marker=dict(
+            showscale=False, color=node_color, size=node_size, opacity=0.9,
+            line=dict(width=1, color='black')
+        ),
+        showlegend=False 
+    )
+
+    layout = go.Layout(
+        title=dict(text=f'Technology Network (Similarity >= {threshold})', font=dict(size=16)),
+        showlegend=True,
+        hovermode='closest',
+        margin=dict(b=20, l=5, r=5, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=800, plot_bgcolor='white',
+        legend=dict(
+            x=0.98,   
+            y=0.02, 
+            xanchor='right', 
+            yanchor='bottom',
+            bgcolor='rgba(255, 255, 255, 0.9)',
+            bordercolor='Black',
+            borderwidth=1
+        )
+    )
+    fig = go.Figure(data=[edge_trace, node_trace], layout=layout)
+
+    for category_letter, color in colors_map.items():
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker=dict(size=10, color=color),
+            legendgroup=category_letter, showlegend=True, name=f'Category {category_letter}'
+        ))
+        
+    fig.update_layout(legend_title_text='Technology Category')
+    
+    return fig
+
+similarity_threshold = 0.6
+G = create_network_graph(data, sim_combined_df_sorted, similarity_threshold)
+
+print("No. Node:", G.number_of_nodes())
+print("No. Edge:", G.number_of_edges())
+if G.number_of_nodes() > 0:
+    print("Density:", nx.density(G))
+
+colors_map = {'A': 'red', 'B': 'blue', 'C': 'green', 'D': 'purple', 'E': 'orange', 'F': 'brown'}
+fig = create_graph_figure(G, similarity_threshold, colors_map)
+fig.show()
