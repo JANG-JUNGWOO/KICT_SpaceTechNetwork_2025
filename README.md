@@ -11,10 +11,10 @@ Crewed space habitat construction is a multidisciplinary endeavor that involves 
 #### 1. Semantic Network Generation
   - Generates high-dimensional vectors from concatenated technology descriptions using SBERT (all-MiniLM-L12-v2)
   - Nodes represent technologies, and edges are established based on a cosine similarity threshold of 0.6
-#### 2. Community Detection for technology cluster
+#### 2. Community Detection
   - Applies the Louvain method to detect modular communities of functionally related technologies
-  - Differentiates connection strengths using solid lines for strong relationships (similarity $\ge$ 0.7) and dashed lines for moderate ones (0.6–0.7)
-#### 3. Centrality Analysis for core technology
+  - Differentiates connection strengths using solid lines for strong relationships and dashed lines for moderate ones
+#### 3. Centrality Analysis
   - Evaluates node importance using Degree, Betweenness, and Closeness centrality
   - Applies Min-Max normalization to centrality scores to identify and rank core technologies within the network
 
